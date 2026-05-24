@@ -137,10 +137,20 @@ return view.extend({
 			btn.classList.add('spinning');
 
 		return this.callAddonAction(action).then(L.bind(function(res) {
-			if (!res || res.ok === false)
-				throw new Error(res && res.error ? res.error : 'action failed');
+			if (!res || res.ok === false) {
+				var err = new Error(res && res.error ? res.error : 'action failed');
+				err.noFallback = true;
+				throw err;
+			}
 
 			return this.reloadStatus();
+		}, this)).catch(L.bind(function(e) {
+			if (e && e.noFallback)
+				throw e;
+
+			return this.callRcInit('homeproxy-dscp', action).then(L.bind(function() {
+				return this.reloadStatus();
+			}, this));
 		}, this)).catch(function(e) {
 			ui.addNotification(null, E('p', [
 				'Не удалось выполнить действие сервиса: %s'.format(e.message || e),
