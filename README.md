@@ -10,12 +10,17 @@ This addon requires the official ImmortalWrt HomeProxy package:
 - ImmortalWrt package feed, 24.10 aarch64_cortex-a53: [luci packages](https://downloads.immortalwrt.org/releases/packages-24.10/aarch64_cortex-a53/luci/)
 - ImmortalWrt release packages, 24.10.4 root: [release package index](https://downloads.immortalwrt.org/releases/24.10.4/)
 
-Install dependency on the router:
+On stock OpenWrt, `luci-app-homeproxy` is not part of the official OpenWrt package feeds. Install HomeProxy separately
+from the HomeProxy/ImmortalWrt package source first, then install this addon.
+
+Install HomeProxy on ImmortalWrt or on a router with a HomeProxy package feed:
 
 ```sh
 opkg update
 opkg install luci-app-homeproxy
 ```
+
+For stock OpenWrt, install HomeProxy separately first. Then install only the generic dependencies listed below.
 
 ## Local IPv4 bypass
 
@@ -92,7 +97,7 @@ Windows App.exe
 
 ```sh
 opkg update
-opkg install firewall4 ip-full jsonfilter kmod-nft-tproxy nftables sing-box ucode ucode-mod-fs ucode-mod-uci luci-app-homeproxy
+opkg install firewall4 ip-full jsonfilter kmod-nft-tproxy nftables sing-box ucode ucode-mod-fs ucode-mod-uci
 tar -xzf /tmp/homeproxy-dscp.tar.gz -C /
 chmod +x /etc/init.d/homeproxy-dscp /usr/share/homeproxy-dscp/generate.uc /usr/libexec/rpcd/homeproxy-dscp
 /etc/init.d/rpcd restart
@@ -256,7 +261,7 @@ On the router:
 
 ```sh
 opkg update
-opkg install firewall4 ip-full jsonfilter kmod-nft-tproxy nftables sing-box ucode ucode-mod-fs ucode-mod-uci luci-app-homeproxy
+opkg install firewall4 ip-full jsonfilter kmod-nft-tproxy nftables sing-box ucode ucode-mod-fs ucode-mod-uci
 tar -xzf /tmp/homeproxy-dscp.tar.gz -C /
 chmod +x /etc/init.d/homeproxy-dscp /usr/share/homeproxy-dscp/generate.uc /usr/libexec/rpcd/homeproxy-dscp
 /etc/init.d/rpcd restart
@@ -419,7 +424,7 @@ FileBrowser 或 `scp -O`。
 
 ```sh
 opkg update
-opkg install firewall4 ip-full jsonfilter kmod-nft-tproxy nftables sing-box ucode ucode-mod-fs ucode-mod-uci luci-app-homeproxy
+opkg install firewall4 ip-full jsonfilter kmod-nft-tproxy nftables sing-box ucode ucode-mod-fs ucode-mod-uci
 tar -xzf /tmp/homeproxy-dscp.tar.gz -C /
 chmod +x /etc/init.d/homeproxy-dscp /usr/share/homeproxy-dscp/generate.uc /usr/libexec/rpcd/homeproxy-dscp
 /etc/init.d/rpcd restart

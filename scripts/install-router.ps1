@@ -50,13 +50,17 @@ $depsBlock = ""
 if ($InstallDeps) {
     $depsBlock = @"
 opkg update
-for pkg in firewall4 ip-full jsonfilter kmod-nft-tproxy nftables sing-box ucode ucode-mod-fs ucode-mod-uci luci-app-homeproxy; do
+for pkg in firewall4 ip-full jsonfilter kmod-nft-tproxy nftables sing-box ucode ucode-mod-fs ucode-mod-uci; do
   if ! opkg status "$pkg" 2>/dev/null | grep -q '^Status: .* installed'; then
     opkg install "$pkg"
   else
     echo "$pkg is already installed; skipping"
   fi
 done
+if ! opkg status luci-app-homeproxy 2>/dev/null | grep -q '^Status: .* installed'; then
+  echo "WARNING: luci-app-homeproxy is not installed from this package feed."
+  echo "Install HomeProxy separately first. On stock OpenWrt it is not part of the official feeds."
+fi
 "@
 }
 
@@ -118,6 +122,12 @@ $restoreConfigBlock
 chmod +x /etc/init.d/homeproxy-dscp /usr/share/homeproxy-dscp/generate.uc /usr/libexec/rpcd/homeproxy-dscp
 /etc/init.d/rpcd restart || true
 /etc/init.d/uhttpd restart || true
+sleep 1
+if ! ubus -S list homeproxy-dscp >/dev/null 2>&1; then
+  echo "WARNING: ubus object homeproxy-dscp is not visible yet."
+  echo "If LuCI service buttons fail, run: /etc/init.d/rpcd restart && /etc/init.d/uhttpd restart"
+  echo "Then check: ubus -S list homeproxy-dscp"
+fi
 $enableBlock
 $startBlock
 echo "Installed homeproxy-dscp. Backup: `$backup"
