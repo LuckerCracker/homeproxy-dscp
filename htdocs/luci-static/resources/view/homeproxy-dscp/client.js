@@ -183,6 +183,8 @@ return view.extend({
 		m = new form.Map('homeproxy_dscp', _('HomeProxy DSCP'),
 			'Маршрутизация Windows-трафика с DSCP-меткой через отдельный sing-box instance без изменения файлов HomeProxy.');
 
+		hostChoices = this.getHostChoices(hints);
+
 		s = m.section(form.NamedSection, 'main', 'settings', 'Global Settings');
 		s.anonymous = true;
 
@@ -225,6 +227,9 @@ return view.extend({
 		o = s.option(form.DynamicList, 'bypass_ipv4', 'Дополнительные IPv4/CIDR без прокси');
 		o.datatype = 'or(ip4addr,cidr4)';
 		o.placeholder = '192.168.1.0/24';
+		hostChoices.forEach(function(choice) {
+			o.value(choice[0], choice[1]);
+		});
 
 		o = s.option(form.DynamicList, 'bypass_wan_ipv4', 'WAN IPv4/CIDR без прокси');
 		o.datatype = 'or(ip4addr,cidr4)';
@@ -247,7 +252,6 @@ return view.extend({
 		o.placeholder = '192.168.1.123';
 		o.rmempty = false;
 
-		hostChoices = this.getHostChoices(hints);
 		hostChoices.forEach(function(choice) {
 			o.value(choice[0], choice[1]);
 		});
