@@ -13,6 +13,10 @@ This addon requires the official ImmortalWrt HomeProxy package:
 On stock OpenWrt, `luci-app-homeproxy` is not part of the official OpenWrt package feeds. Install HomeProxy separately
 from the HomeProxy/ImmortalWrt package source first, then install this addon.
 
+If you use stock OpenWrt with ImmortalWrt package feeds added manually, `opkg install luci-app-homeproxy` may work too.
+Use feeds that match your OpenWrt release, target and ABI as closely as possible. Mixing package feeds can upgrade shared
+packages such as `sing-box`, `ucode` or LuCI components, so keep a backup before installing.
+
 Install HomeProxy on ImmortalWrt or on a router with a HomeProxy package feed:
 
 ```sh
@@ -81,6 +85,10 @@ Windows App.exe
 ```
 
 ### Установка
+
+На обычном OpenWrt пакет `luci-app-homeproxy` обычно отсутствует в официальных feeds OpenWrt. Если вы добавили feeds от
+ImmortalWrt вручную, установка `opkg install luci-app-homeproxy` может работать, но это смешивание feeds. Используйте
+feeds, максимально совпадающие с вашей версией OpenWrt, target и ABI, и сделайте backup перед установкой.
 
 Из папки проекта на Windows:
 
@@ -246,6 +254,10 @@ Windows App.exe
 
 ### Install
 
+On stock OpenWrt, `luci-app-homeproxy` is usually unavailable in official OpenWrt feeds. If you manually added
+ImmortalWrt feeds, `opkg install luci-app-homeproxy` may work, but this mixes package feeds. Use feeds matching your
+OpenWrt release, target and ABI as closely as possible, and make a backup first.
+
 From the project directory on Windows:
 
 ```powershell
@@ -408,6 +420,10 @@ Windows App.exe
 ```
 
 ### 安装
+
+在原版 OpenWrt 上，`luci-app-homeproxy` 通常不在官方 OpenWrt feeds 中。如果你手动添加了 ImmortalWrt feeds，
+`opkg install luci-app-homeproxy` 也可能可用，但这属于混用 feeds。请尽量使用与 OpenWrt 版本、target 和 ABI 匹配的
+feeds，并在安装前备份配置。
 
 在 Windows 的项目目录中运行：
 
