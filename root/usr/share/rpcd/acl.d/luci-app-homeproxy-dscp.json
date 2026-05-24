@@ -1,0 +1,32 @@
+{
+	"luci-app-homeproxy-dscp": {
+		"description": "Grant access to HomeProxy DSCP configuration",
+		"read": {
+			"uci": [ "homeproxy", "homeproxy_dscp" ],
+			"ubus": {
+				"luci-rpc": [ "getHostHints" ],
+				"homeproxy-dscp": [ "status" ],
+				"rc": [ "list" ],
+				"service": [ "list" ],
+				"file": [ "exec", "read", "stat" ]
+			},
+			"file": {
+				"/var/run/homeproxy-dscp/sing-box.log": [ "read" ],
+				"/bin/ash": [ "exec" ],
+				"/usr/sbin/nft": [ "exec" ]
+			}
+		},
+		"write": {
+			"uci": [ "homeproxy_dscp" ],
+			"ubus": {
+				"homeproxy-dscp": [ "action", "clear_log", "set_log_level" ],
+				"rc": [ "init" ],
+				"file": [ "exec", "write" ]
+			},
+			"file": {
+				"/etc/init.d/homeproxy-dscp": [ "exec" ],
+				"/var/run/homeproxy-dscp/sing-box.log": [ "write" ]
+			}
+		}
+	}
+}

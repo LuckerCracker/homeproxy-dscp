@@ -1,0 +1,74 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+
+case "$1" in
+	list)
+		cat <<'EOF'
+{
+	"status": {},
+	"action": {
+		"name": "string"
+	},
+	"clear_log": {},
+	"set_log_level": {
+		"level": "string"
+	}
+}
+EOF
+	;;
+	call)
+		method="$2"
+		case "$method" in
+			status)
+				if ls /etc/rc.d/S*homeproxy-dscp >/dev/null 2>&1; then
+					autostart=1
+				else
+					autostart=0
+				fi
+
+				if pgrep -f 'sing-box run -c /var/run/homeproxy-dscp/sing-box.json' >/dev/null 2>&1; then
+					running=1
+				else
+					running=0
+				fi
+
+				printf '{"autostart":%s,"running":%s}\n' "$autostart" "$running"
+				;;
+			action)
+				read -r input
+				action="$(jsonfilter -s "$input" -e '@.name' 2>/dev/null)"
+				case "$action" in
+					start|stop|restart|reload|enable|disable)
+						if /etc/init.d/homeproxy-dscp "$action"; then
+							printf '{"ok":true}\n'
+						else
+							printf '{"ok":false,"error":"init command failed"}\n'
+						fi
+						;;
+					*)
+						printf '{"ok":false,"error":"unsupported action"}\n'
+						;;
+				esac
+				;;
+			clear_log)
+				: > /var/run/homeproxy-dscp/sing-box.log
+				printf '{"ok":true}\n'
+				;;
+			set_log_level)
+				read -r input
+				level="$(jsonfilter -s "$input" -e '@.level' 2>/dev/null)"
+				case "$level" in
+					trace|debug|info|warn|error|fatal|panic)
+						uci set "homeproxy_dscp.main.log_level=$level"
+						uci commit homeproxy_dscp
+						/etc/init.d/homeproxy-dscp restart >/dev/null 2>&1 || true
+						printf '{"ok":true}\n'
+						;;
+					*)
+						printf '{"ok":false,"error":"unsupported log level"}\n'
+						;;
+				esac
+				;;
+		esac
+	;;
+esac

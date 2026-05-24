@@ -1,0 +1,14 @@
+{
+	"admin/services/homeproxy-dscp": {
+		"title": "HomeProxy DSCP",
+		"order": 61,
+		"action": {
+			"type": "view",
+			"path": "homeproxy-dscp/client"
+		},
+		"depends": {
+			"acl": [ "luci-app-homeproxy-dscp" ],
+			"uci": { "homeproxy_dscp": true }
+		}
+	}
+}
