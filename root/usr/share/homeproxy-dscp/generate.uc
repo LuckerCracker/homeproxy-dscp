@@ -279,6 +279,17 @@ function collect_network_bypass4(out) {
 	});
 }
 
+function add_bypass_cidr_list(out, option) {
+	for (let cidr in parse_list(uci.get(cfg_name, 'main', option))) {
+		let normalized = normalize_cidr4(cidr);
+
+		if (normalized == null)
+			die(sprintf('Invalid bypass IPv4/CIDR "%s" in option "%s".\n', cidr, option));
+
+		add_unique_cidr(out, normalized);
+	}
+}
+
 function dscp_hex(v) {
 	let d = int(v);
 	if (d < 0 || d > 63)
@@ -312,14 +323,8 @@ if (bypass_local) {
 	collect_network_bypass4(bypass4);
 }
 
-for (let cidr in parse_list(uci.get(cfg_name, 'main', 'bypass_ipv4'))) {
-	let normalized = normalize_cidr4(cidr);
-
-	if (normalized == null)
-		die(sprintf('Invalid bypass IPv4/CIDR "%s".\n', cidr));
-
-	add_unique_cidr(bypass4, normalized);
-}
+add_bypass_cidr_list(bypass4, 'bypass_ipv4');
+add_bypass_cidr_list(bypass4, 'bypass_wan_ipv4');
 
 let config = {
 	log: {

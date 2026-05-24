@@ -226,6 +226,10 @@ return view.extend({
 		o.datatype = 'or(ip4addr,cidr4)';
 		o.placeholder = '192.168.1.0/24';
 
+		o = s.option(form.DynamicList, 'bypass_wan_ipv4', 'WAN IPv4/CIDR без прокси');
+		o.datatype = 'or(ip4addr,cidr4)';
+		o.placeholder = '203.0.113.10';
+
 		s = m.section(form.GridSection, 'rule', 'DSCP Routing Rules');
 		s.addremove = true;
 		s.anonymous = true;

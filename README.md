@@ -24,7 +24,7 @@ set and returns before TCP redirect / UDP TProxy for:
 
 - private and reserved IPv4 ranges, for example `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`;
 - IPv4 subnets detected from `/etc/config/network`, including non-RFC1918 local LANs;
-- extra IPv4/CIDR entries configured in LuCI.
+- extra IPv4/CIDR entries configured in LuCI, including explicit WAN IPv4/CIDR exclusions.
 
 This keeps router/LAN access working even when the Windows application is DSCP-marked.
 
