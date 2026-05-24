@@ -17,6 +17,17 @@ opkg update
 opkg install luci-app-homeproxy
 ```
 
+## Local IPv4 bypass
+
+By default the addon does not proxy local destination IPv4 addresses. The generated nftables table creates a `bypass4`
+set and returns before TCP redirect / UDP TProxy for:
+
+- private and reserved IPv4 ranges, for example `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`;
+- IPv4 subnets detected from `/etc/config/network`, including non-RFC1918 local LANs;
+- extra IPv4/CIDR entries configured in LuCI.
+
+This keeps router/LAN access working even when the Windows application is DSCP-marked.
+
 Languages: [Русский](#русский) | [English](#english) | [中文](#中文)
 
 ---

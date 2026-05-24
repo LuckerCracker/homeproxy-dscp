@@ -7,6 +7,7 @@ config settings 'main'
 	option rule_priority '15332'
 	option log_level 'warn'
 	option sniff '1'
+	option bypass_local '1'
 	option nft_priority_tcp '-101'
 	option nft_priority_udp '-151'
 

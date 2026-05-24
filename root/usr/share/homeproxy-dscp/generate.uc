@@ -19,10 +19,12 @@ const TABLE_NAME = 'homeproxy_dscp';
 
 const cfg_name = 'homeproxy_dscp';
 const hp_name = 'homeproxy';
+const network_name = 'network';
 const uci = cursor();
 
 uci.load(cfg_name);
 uci.load(hp_name);
+uci.load(network_name);
 
 function is_empty(v) {
 	return v == null || v === '' || (type(v) === 'array' && length(v) === 0);
@@ -90,6 +92,193 @@ function validate_ipv4(addr) {
 	return true;
 }
 
+const POW2 = [
+	1, 2, 4, 8, 16, 32, 64, 128,
+	256, 512, 1024, 2048, 4096, 8192, 16384, 32768,
+	65536, 131072, 262144, 524288, 1048576, 2097152, 4194304, 8388608,
+	16777216, 33554432, 67108864, 134217728, 268435456, 536870912, 1073741824, 2147483648,
+	4294967296
+];
+
+const BUILTIN_BYPASS4 = [
+	'0.0.0.0/8',
+	'10.0.0.0/8',
+	'100.64.0.0/10',
+	'127.0.0.0/8',
+	'169.254.0.0/16',
+	'172.16.0.0/12',
+	'192.0.0.0/24',
+	'192.0.2.0/24',
+	'192.168.0.0/16',
+	'198.18.0.0/15',
+	'198.51.100.0/24',
+	'203.0.113.0/24',
+	'224.0.0.0/4',
+	'240.0.0.0/4'
+];
+
+function join_list(arr, sep) {
+	let out = '';
+	let first = true;
+
+	for (let v in arr) {
+		if (!first)
+			out += sep;
+		first = false;
+		out += v;
+	}
+
+	return out;
+}
+
+function add_unique(arr, value) {
+	for (let v in arr)
+		if (v === value)
+			return;
+
+	push(arr, value);
+}
+
+function ip_to_num(addr) {
+	let p = split(addr, '.');
+	return int(p[0]) * 16777216 + int(p[1]) * 65536 + int(p[2]) * 256 + int(p[3]);
+}
+
+function num_to_ip(num) {
+	let a = int(num / 16777216);
+	num -= a * 16777216;
+	let b = int(num / 65536);
+	num -= b * 65536;
+	let c = int(num / 256);
+	let d = num - c * 256;
+
+	return sprintf('%d.%d.%d.%d', a, b, c, d);
+}
+
+function cidr_parts(cidr) {
+	let parts = split(cidr, '/');
+
+	if (length(parts) !== 2 || !validate_ipv4(parts[0]))
+		return null;
+
+	let prefix = int(parts[1]);
+
+	if (prefix < 0 || prefix > 32)
+		return null;
+
+	return {
+		addr: ip_to_num(parts[0]),
+		prefix: prefix
+	};
+}
+
+function cidr_contains(parent, child) {
+	parent = cidr_parts(parent);
+	child = cidr_parts(child);
+
+	if (parent == null || child == null || parent.prefix > child.prefix)
+		return false;
+
+	let block = POW2[32 - parent.prefix];
+	return int(child.addr / block) * block === parent.addr;
+}
+
+function add_unique_cidr(arr, cidr) {
+	for (let existing in arr)
+		if (cidr_contains(existing, cidr))
+			return;
+
+	add_unique(arr, cidr);
+}
+
+function netmask_prefix(mask) {
+	let bits = {
+		'255': 8,
+		'254': 7,
+		'252': 6,
+		'248': 5,
+		'240': 4,
+		'224': 3,
+		'192': 2,
+		'128': 1,
+		'0': 0
+	};
+
+	if (!validate_ipv4(mask))
+		return null;
+
+	let prefix = 0;
+	let zero_seen = false;
+
+	for (let octet in split(mask, '.')) {
+		let b = bits[octet];
+
+		if (b == null)
+			return null;
+
+		if (zero_seen && b !== 0)
+			return null;
+
+		prefix += b;
+
+		if (b !== 8)
+			zero_seen = true;
+	}
+
+	return prefix;
+}
+
+function cidr_network(addr, prefix) {
+	prefix = int(prefix);
+
+	if (!validate_ipv4(addr) || prefix < 0 || prefix > 32)
+		return null;
+
+	let block = POW2[32 - prefix];
+	let network = int(ip_to_num(addr) / block) * block;
+
+	return sprintf('%s/%d', num_to_ip(network), prefix);
+}
+
+function normalize_cidr4(value) {
+	if (is_empty(value))
+		return null;
+
+	value = trim(value);
+
+	if (validate_ipv4(value))
+		return value + '/32';
+
+	let parts = split(value, '/');
+
+	if (length(parts) !== 2)
+		return null;
+
+	return cidr_network(parts[0], int(parts[1]));
+}
+
+function collect_network_bypass4(out) {
+	uci.foreach(network_name, 'interface', (iface) => {
+		let addrs = parse_list(iface.ipaddr);
+		let masks = parse_list(iface.netmask);
+		let mask = length(masks) ? masks[0] : null;
+		let prefix = mask ? netmask_prefix(mask) : null;
+
+		for (let addr in addrs) {
+			let cidr = null;
+			let parts = split(addr, '/');
+
+			if (length(parts) === 2)
+				cidr = cidr_network(parts[0], int(parts[1]));
+			else if (prefix != null)
+				cidr = cidr_network(addr, prefix);
+
+			if (cidr != null)
+				add_unique_cidr(out, cidr);
+		}
+	});
+}
+
 function dscp_hex(v) {
 	let d = int(v);
 	if (d < 0 || d > 63)
@@ -108,10 +297,29 @@ const route_table = int(uci.get(cfg_name, 'main', 'table') || 5332);
 const rule_priority = int(uci.get(cfg_name, 'main', 'rule_priority') || 15332);
 const log_level = uci.get(cfg_name, 'main', 'log_level') || 'warn';
 const sniff = to_bool(uci.get(cfg_name, 'main', 'sniff') || '1');
+const bypass_local = to_bool(uci.get(cfg_name, 'main', 'bypass_local') || '1');
 const nft_priority_tcp = int(uci.get(cfg_name, 'main', 'nft_priority_tcp') || -101);
 const nft_priority_udp = int(uci.get(cfg_name, 'main', 'nft_priority_udp') || -151);
 const udp_timeout = uci.get(hp_name, 'infra', 'udp_timeout') || '300';
 const self_mark = int(uci.get(hp_name, 'infra', 'self_mark') || 100);
+
+let bypass4 = [];
+
+if (bypass_local) {
+	for (let cidr in BUILTIN_BYPASS4)
+		add_unique_cidr(bypass4, cidr);
+
+	collect_network_bypass4(bypass4);
+}
+
+for (let cidr in parse_list(uci.get(cfg_name, 'main', 'bypass_ipv4'))) {
+	let normalized = normalize_cidr4(cidr);
+
+	if (normalized == null)
+		die(sprintf('Invalid bypass IPv4/CIDR "%s".\n', cidr));
+
+	add_unique_cidr(bypass4, normalized);
+}
 
 let config = {
 	log: {
@@ -470,11 +678,22 @@ if (!length(config.endpoints))
 	config.endpoints = null;
 
 let nft = sprintf('table inet %s {\n', TABLE_NAME);
+if (length(bypass4)) {
+	nft += '\tset bypass4 {\n';
+	nft += '\t\ttype ipv4_addr\n';
+	nft += '\t\tflags interval\n';
+	nft += sprintf('\t\telements = { %s }\n', join_list(bypass4, ', '));
+	nft += '\t}\n\n';
+}
 nft += sprintf('\tchain tcp_redirect {\n\t\ttype nat hook prerouting priority %d; policy accept;\n', nft_priority_tcp);
+if (length(bypass4))
+	nft += '\t\tip daddr @bypass4 return\n';
 for (let line in nft_tcp)
 	nft += line;
 nft += '\t}\n\n';
 nft += sprintf('\tchain udp_tproxy {\n\t\ttype filter hook prerouting priority %d; policy accept;\n', nft_priority_udp);
+if (length(bypass4))
+	nft += '\t\tip daddr @bypass4 return\n';
 for (let line in nft_udp)
 	nft += line;
 nft += '\t}\n';

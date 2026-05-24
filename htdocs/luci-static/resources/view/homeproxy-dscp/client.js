@@ -218,6 +218,14 @@ return view.extend({
 		o.default = '1';
 		o.rmempty = false;
 
+		o = s.option(form.Flag, 'bypass_local', 'Не проксировать локальные IPv4');
+		o.default = '1';
+		o.rmempty = false;
+
+		o = s.option(form.DynamicList, 'bypass_ipv4', 'Дополнительные IPv4/CIDR без прокси');
+		o.datatype = 'or(ip4addr,cidr4)';
+		o.placeholder = '192.168.1.0/24';
+
 		s = m.section(form.GridSection, 'rule', 'DSCP Routing Rules');
 		s.addremove = true;
 		s.anonymous = true;
