@@ -119,6 +119,7 @@ done
 $preserveConfigBlock
 tar -xzf $remote -C /
 $restoreConfigBlock
+sed -i 's/\r$//' /etc/init.d/homeproxy-dscp /usr/share/homeproxy-dscp/generate.uc /usr/libexec/rpcd/homeproxy-dscp
 chmod +x /etc/init.d/homeproxy-dscp /usr/share/homeproxy-dscp/generate.uc /usr/libexec/rpcd/homeproxy-dscp
 /etc/init.d/rpcd restart || true
 /etc/init.d/uhttpd restart || true
