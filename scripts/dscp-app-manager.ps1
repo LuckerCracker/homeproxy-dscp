@@ -4,22 +4,30 @@ param(
     [int]$Port = 22,
     [string]$DefaultTarget = "routing:EU_NODE",
     [int]$DefaultDscp = 46,
-    [string]$PolicyStore = $env:COMPUTERNAME
+    [string]$PolicyStore = $env:COMPUTERNAME,
+    [switch]$WindowsOnly
 )
 
 $ErrorActionPreference = "Stop"
 $Script:Prefix = "HP-DSCP-"
 
 function Initialize-Manager {
+    if ($WindowsOnly) {
+        $Script:Router = $null
+        return
+    }
+
     if (-not $Router) {
         Write-Host "HomeProxy DSCP App Manager" -ForegroundColor Cyan
         Write-Host "==========================" -ForegroundColor Cyan
         Write-Host ""
-        Write-Host "Enter router IP to let the manager update HomeProxy DSCP rules."
-        Write-Host "Leave it empty for Windows-only mode."
+        Write-Host "Choose how the manager should work:"
+        Write-Host ""
+        Write-Host "  Router sync   - create Windows QoS policy and update HomeProxy DSCP on the router."
+        Write-Host "  Windows-only  - create Windows QoS policy only and print LuCI values for manual router setup."
         Write-Host ""
 
-        $value = Read-Host "Router IP"
+        $value = Read-Host "Router IP, or press Enter for Windows-only"
         if (-not [string]::IsNullOrWhiteSpace($value)) {
             $Script:Router = $value.Trim()
         }
@@ -41,9 +49,10 @@ function Write-Header {
     Write-Host "HomeProxy DSCP App Manager" -ForegroundColor Cyan
     Write-Host "==========================" -ForegroundColor Cyan
     Write-Host ""
-    Write-Host "Router:        $(if ($Router) { $Router } else { 'not configured' })"
+    Write-Host "Mode:          $(if ($Router) { 'Router sync' } else { 'Windows-only' })"
+    Write-Host "Router:        $(if ($Router) { $Router } else { 'not used' })"
     Write-Host "Default DSCP:  $DefaultDscp"
-    Write-Host "Default node:  $DefaultTarget"
+    Write-Host "Default node:  $(if ($Router) { $DefaultTarget } else { "$DefaultTarget (manual LuCI hint)" })"
     Write-Host "Policy store:  $PolicyStore"
     Write-Host ""
 }
@@ -107,6 +116,13 @@ function Get-PrimaryIPv4 {
     }
 
     return $null
+}
+
+function Resolve-ApplicationPath {
+    param([string]$Path)
+
+    $candidate = $Path.Trim().Trim('"')
+    return (Resolve-Path -LiteralPath $candidate).Path
 }
 
 function Escape-SingleQuotedShell {
@@ -283,8 +299,8 @@ function Select-Policy {
     }
 
     for ($i = 0; $i -lt $policies.Count; $i++) {
-        Write-Host ("[{0}] {1}" -f ($i + 1), $policies[$i].Name.Substring($Script:Prefix.Length))
-        Write-Host ("    {0}" -f $policies[$i].AppPathName)
+        Write-Host ("[{0}] {1}" -f ($i + 1), (Get-PolicyShortName $policies[$i]))
+        Write-Host ("    {0}" -f (Get-PolicyAppPath $policies[$i]))
     }
 
     $choice = Read-Host "Select policy number"
@@ -298,6 +314,38 @@ function Select-Policy {
     }
 
     return $policies[$index]
+}
+
+function Write-ManualRouterRule {
+    param(
+        [string]$RuleName,
+        [string]$WindowsIp,
+        [int]$Dscp,
+        [string]$Protocols,
+        [string]$Target
+    )
+
+    Write-Host ""
+    Write-Host "Manual LuCI rule" -ForegroundColor Cyan
+    Write-Host "Open: Services -> HomeProxy DSCP -> DSCP Routing Rules -> Add"
+    Write-Host ""
+    Write-Host "  Enabled:             yes"
+    Write-Host "  Name:                $RuleName"
+    Write-Host "  Windows source IPv4: $WindowsIp"
+    Write-Host "  DSCP value:          $Dscp"
+    Write-Host "  Protocols:           $Protocols"
+    Write-Host "  Target:              $Target"
+    Write-Host ""
+    Write-Host "Equivalent router commands:" -ForegroundColor DarkCyan
+    Write-Host "  uci add homeproxy_dscp rule"
+    Write-Host "  uci set homeproxy_dscp.@rule[-1].enabled='1'"
+    Write-Host "  uci set homeproxy_dscp.@rule[-1].label='$RuleName'"
+    Write-Host "  uci set homeproxy_dscp.@rule[-1].src_ip='$WindowsIp'"
+    Write-Host "  uci set homeproxy_dscp.@rule[-1].dscp='$Dscp'"
+    Write-Host "  uci set homeproxy_dscp.@rule[-1].proto='$Protocols'"
+    Write-Host "  uci set homeproxy_dscp.@rule[-1].target='$Target'"
+    Write-Host "  uci commit homeproxy_dscp"
+    Write-Host "  /etc/init.d/homeproxy-dscp restart"
 }
 
 function Ensure-QosPolicy {
@@ -339,14 +387,7 @@ function Invoke-RouterRuleUpdate {
     )
 
     if (-not $Router) {
-        Write-Host ""
-        Write-Host "Router is not configured. Enter these values in LuCI:" -ForegroundColor Yellow
-        Write-Host "  Enable: yes"
-        Write-Host "  Name: $RuleName"
-        Write-Host "  Windows source IPv4: $WindowsIp"
-        Write-Host "  DSCP value: $Dscp"
-        Write-Host "  Protocols: $Protocols"
-        Write-Host "  Target HomeProxy routing node: $Target"
+        Write-ManualRouterRule -RuleName $RuleName -WindowsIp $WindowsIp -Dscp $Dscp -Protocols $Protocols -Target $Target
         return
     }
 
@@ -473,17 +514,22 @@ function Show-MatchReport {
 function Add-AppFlow {
     Write-Header
     Write-Host "Add or update application" -ForegroundColor Cyan
+    if (-not $Router) {
+        Write-Host "Windows-only mode: this will create only a Windows QoS policy." -ForegroundColor Yellow
+        Write-Host "The manager will print the LuCI rule values after saving."
+    }
     Write-Host ""
 
     $appPath = Read-Default "Application .exe path" ""
-    $appPath = (Resolve-Path -LiteralPath $appPath).Path
+    $appPath = Resolve-ApplicationPath $appPath
 
     $defaultName = [IO.Path]::GetFileNameWithoutExtension($appPath)
     $ruleName = Read-Default "Rule name" $defaultName
     $windowsIp = Read-Default "Windows IPv4" (Get-PrimaryIPv4)
     $dscp = [int](Read-Default "DSCP value" ([string]$DefaultDscp))
     $protocols = Read-Default "Protocols: both, tcp, udp" "both"
-    $target = Read-Default "Router target" $DefaultTarget
+    $targetPrompt = if ($Router) { "Router target" } else { "Target for manual LuCI rule" }
+    $target = Read-Default $targetPrompt $DefaultTarget
 
     if ($protocols -notin @("both", "tcp", "udp")) {
         throw "Protocols must be one of: both, tcp, udp."
@@ -500,6 +546,7 @@ function Add-AppFlow {
     Write-Host "  DSCP:      $dscp"
     Write-Host "  Protocols: $protocols"
     Write-Host "  Target:    $target"
+    Write-Host "  Mode:      $(if ($Router) { 'update router rule now' } else { 'Windows-only, print LuCI values' })"
     Write-Host ""
 
     $confirm = Read-Default "Apply changes? y/n" "y"
@@ -520,6 +567,32 @@ function Add-AppFlow {
 
     Write-Host ""
     Write-Host "Strict rule: without a matching enabled router rule for this Windows IPv4 + DSCP + protocol, traffic will not be proxied." -ForegroundColor Yellow
+}
+
+function ManualRouterRuleFlow {
+    Write-Header
+    Write-Host "Print manual LuCI rule values" -ForegroundColor Cyan
+    Write-Host ""
+
+    $policy = Select-Policy
+    if (-not $policy) {
+        return
+    }
+
+    $ruleName = Get-PolicyShortName $policy
+    $windowsIp = Read-Default "Windows IPv4" (Get-PrimaryIPv4)
+    $dscp = Get-PolicyDscp $policy
+    if ($null -eq $dscp) {
+        $dscp = [int](Read-Default "DSCP value" ([string]$DefaultDscp))
+    }
+    $protocols = Read-Default "Protocols: both, tcp, udp" "both"
+    $target = Read-Default "Target for manual LuCI rule" $DefaultTarget
+
+    if ($protocols -notin @("both", "tcp", "udp")) {
+        throw "Protocols must be one of: both, tcp, udp."
+    }
+
+    Write-ManualRouterRule -RuleName $ruleName -WindowsIp $windowsIp -Dscp $dscp -Protocols $protocols -Target $target
 }
 
 function Remove-AppFlow {
@@ -564,11 +637,20 @@ function Test-DscpFlow {
         @{n = "AppPath"; e = { Get-PolicyAppPath $_ } } |
         Format-Table -AutoSize
     Write-Host ""
-    Write-Host "Router checks:"
-    Write-Host "  nft list table inet homeproxy_dscp"
-    Write-Host "  tcpdump -i br-lan -vv host $(Get-PrimaryIPv4)"
-    Write-Host ""
-    Write-Host "Look for DSCP EF / tos 0xb8 and increasing tcp/udp counters."
+    if ($Router) {
+        Write-Host "Router checks:"
+        Write-Host "  nft list table inet homeproxy_dscp"
+        Write-Host "  tcpdump -i br-lan -vv host $(Get-PrimaryIPv4)"
+        Write-Host ""
+        Write-Host "Look for DSCP EF / tos 0xb8 and increasing tcp/udp counters."
+    }
+    else {
+        Write-Host "Windows-only checks:"
+        Write-Host "  Get-NetQosPolicy -PolicyStore `$env:COMPUTERNAME"
+        Write-Host "  Get-NetQosPolicy -PolicyStore ActiveStore"
+        Write-Host ""
+        Write-Host "Router-side checks are available after you add the printed LuCI rule manually."
+    }
 }
 
 function Show-Menu {
@@ -577,9 +659,16 @@ function Show-Menu {
         Write-Host "[1] List DSCP applications"
         Write-Host "[2] Add or update application"
         Write-Host "[3] Remove Windows QoS policy"
-        Write-Host "[4] Check Windows/router matches"
-        Write-Host "[5] Show verification commands"
-        Write-Host "[6] Exit"
+        if ($Router) {
+            Write-Host "[4] Check Windows/router matches"
+            Write-Host "[5] Show verification commands"
+            Write-Host "[6] Exit"
+        }
+        else {
+            Write-Host "[4] Print manual LuCI rule values"
+            Write-Host "[5] Show Windows verification commands"
+            Write-Host "[6] Exit"
+        }
         Write-Host ""
 
         $choice = Read-Host "Choose"
@@ -604,7 +693,7 @@ function Show-Menu {
                         Show-MatchReport
                     }
                     else {
-                        Write-Host "Router is not configured. Restart the manager with -Router 192.168.1.1 to check matches." -ForegroundColor Yellow
+                        ManualRouterRuleFlow
                     }
                     Pause-Menu
                 }

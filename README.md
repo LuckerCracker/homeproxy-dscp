@@ -209,12 +209,25 @@ PowerShell нужно запускать от администратора.
 .\scripts\dscp-app-manager.ps1
 ```
 
+При запуске без параметров manager предложит выбрать режим:
+
+- `Router sync`: создать Windows QoS policy и сразу обновить правило на роутере;
+- `Windows-only`: создать только Windows QoS policy и вывести значения, которые
+  нужно вручную вставить в LuCI.
+
+Чтобы сразу открыть Windows-only режим:
+
+```powershell
+.\scripts\dscp-app-manager.ps1 -WindowsOnly
+```
+
 В меню можно:
 
 - посмотреть приложения с DSCP policy;
 - добавить или обновить приложение;
 - удалить Windows QoS policy;
 - проверить совпадение Windows policies с router rules;
+- вывести значения для ручного правила LuCI в Windows-only режиме;
 - вывести команды проверки.
 
 Если запустить manager без `-Router`, он настроит только Windows и выведет
@@ -423,12 +436,25 @@ Start the interactive manager and enter values in the menu:
 .\scripts\dscp-app-manager.ps1
 ```
 
+When started without parameters, the manager asks which mode to use:
+
+- `Router sync`: create the Windows QoS policy and update the router rule;
+- `Windows-only`: create only the Windows QoS policy and print the values to
+  enter manually in LuCI.
+
+To start directly in Windows-only mode:
+
+```powershell
+.\scripts\dscp-app-manager.ps1 -WindowsOnly
+```
+
 The menu can:
 
 - list DSCP applications;
 - add or update an application;
 - remove a Windows QoS policy;
 - check Windows policies against router rules;
+- print manual LuCI rule values in Windows-only mode;
 - show verification commands.
 
 If `-Router` is omitted, the manager only configures Windows and prints the
@@ -633,12 +659,24 @@ Services -> HomeProxy DSCP
 .\scripts\dscp-app-manager.ps1
 ```
 
+不带参数启动时，管理器会询问使用哪种模式：
+
+- `Router sync`：创建 Windows QoS policy，并自动更新路由器规则；
+- `Windows-only`：只创建 Windows QoS policy，并输出需要手动填入 LuCI 的值。
+
+也可以直接进入 Windows-only 模式：
+
+```powershell
+.\scripts\dscp-app-manager.ps1 -WindowsOnly
+```
+
 菜单可以：
 
 - 查看 DSCP 应用；
 - 添加或更新应用；
 - 删除 Windows QoS policy；
 - 检查 Windows policies 与路由器规则是否匹配；
+- 在 Windows-only 模式下输出手动 LuCI 规则参数；
 - 显示验证命令。
 
 如果不指定 `-Router`，管理器只配置 Windows，并输出需要手动填入 LuCI 的参数。
