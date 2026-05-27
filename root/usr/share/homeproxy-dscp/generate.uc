@@ -109,7 +109,11 @@ const BUILTIN_BYPASS4 = [
 	'172.16.0.0/12',
 	'192.0.0.0/24',
 	'192.0.2.0/24',
+	'192.31.196.0/24',
+	'192.52.193.0/24',
+	'192.88.99.0/24',
 	'192.168.0.0/16',
+	'192.175.48.0/24',
 	'198.18.0.0/15',
 	'198.51.100.0/24',
 	'203.0.113.0/24',
@@ -303,9 +307,9 @@ if (!main_enabled)
 
 const base_tcp_port = int(uci.get(cfg_name, 'main', 'tcp_port') || 15331);
 const base_udp_port = int(uci.get(cfg_name, 'main', 'udp_port') || 15332);
-const fwmark = uci.get(cfg_name, 'main', 'fwmark') || '0x5332';
-const route_table = int(uci.get(cfg_name, 'main', 'table') || 5332);
-const rule_priority = int(uci.get(cfg_name, 'main', 'rule_priority') || 15332);
+const fwmark = uci.get(cfg_name, 'main', 'fwmark') || '0x1d5c9';
+const route_table = int(uci.get(cfg_name, 'main', 'table') || 10532);
+const rule_priority = int(uci.get(cfg_name, 'main', 'rule_priority') || 10532);
 const log_level = uci.get(cfg_name, 'main', 'log_level') || 'warn';
 const sniff = to_bool(uci.get(cfg_name, 'main', 'sniff') || '1');
 const bypass_local = to_bool(uci.get(cfg_name, 'main', 'bypass_local') || '1');
@@ -614,6 +618,7 @@ let nft_tcp = [];
 let nft_udp = [];
 let active = 0;
 let has_udp = false;
+let daddr_filter = length(bypass4) ? 'ip daddr != @bypass4 ' : '';
 
 uci.foreach(cfg_name, 'rule', (rule) => {
 	if (rule.enabled !== '1')
@@ -648,7 +653,7 @@ uci.foreach(cfg_name, 'rule', (rule) => {
 			sniff_override_destination: sniff
 		}));
 		push(inbound_tags, tag);
-		push(nft_tcp, sprintf('\t\tip saddr %s ip dscp %s meta l4proto tcp counter redirect to :%d\n', src_ip, dscp, port));
+		push(nft_tcp, sprintf('\t\tip saddr %s %sip dscp %s meta l4proto tcp counter redirect to :%d\n', src_ip, daddr_filter, dscp, port));
 	}
 
 	if (proto === 'both' || proto === 'udp') {
@@ -666,7 +671,7 @@ uci.foreach(cfg_name, 'rule', (rule) => {
 		}));
 		push(inbound_tags, tag);
 		has_udp = true;
-		push(nft_udp, sprintf('\t\tip saddr %s ip dscp %s meta l4proto udp counter meta mark set %s tproxy ip to 127.0.0.1:%d accept\n', src_ip, dscp, fwmark, port));
+		push(nft_udp, sprintf('\t\tip saddr %s %sip dscp %s meta l4proto udp counter meta mark set %s tproxy ip to 127.0.0.1:%d accept\n', src_ip, daddr_filter, dscp, fwmark, port));
 	}
 
 	push(config.route.rules, {
@@ -687,18 +692,15 @@ if (length(bypass4)) {
 	nft += '\tset bypass4 {\n';
 	nft += '\t\ttype ipv4_addr\n';
 	nft += '\t\tflags interval\n';
+	nft += '\t\tauto-merge\n';
 	nft += sprintf('\t\telements = { %s }\n', join_list(bypass4, ', '));
 	nft += '\t}\n\n';
 }
 nft += sprintf('\tchain tcp_redirect {\n\t\ttype nat hook prerouting priority %d; policy accept;\n', nft_priority_tcp);
-if (length(bypass4))
-	nft += '\t\tip daddr @bypass4 return\n';
 for (let line in nft_tcp)
 	nft += line;
 nft += '\t}\n\n';
 nft += sprintf('\tchain udp_tproxy {\n\t\ttype filter hook prerouting priority %d; policy accept;\n', nft_priority_udp);
-if (length(bypass4))
-	nft += '\t\tip daddr @bypass4 return\n';
 for (let line in nft_udp)
 	nft += line;
 nft += '\t}\n';

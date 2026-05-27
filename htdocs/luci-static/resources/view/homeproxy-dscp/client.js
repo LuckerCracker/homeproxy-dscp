@@ -213,17 +213,17 @@ return view.extend({
 		o.rmempty = false;
 
 		o = s.option(form.Value, 'fwmark', 'UDP fwmark');
-		o.default = '0x5332';
+		o.default = '0x1d5c9';
 		o.rmempty = false;
 
 		o = s.option(form.Value, 'table', 'UDP routing table');
 		o.datatype = 'uinteger';
-		o.default = '5332';
+		o.default = '10532';
 		o.rmempty = false;
 
 		o = s.option(form.Value, 'rule_priority', 'UDP ip rule priority');
 		o.datatype = 'uinteger';
-		o.default = '15332';
+		o.default = '10532';
 		o.rmempty = false;
 
 		o = s.option(form.Flag, 'sniff', 'Sniff traffic');
