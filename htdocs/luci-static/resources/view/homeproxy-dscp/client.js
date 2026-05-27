@@ -226,9 +226,25 @@ return view.extend({
 		o.default = '10532';
 		o.rmempty = false;
 
-		o = s.option(form.Flag, 'sniff', 'Sniff traffic');
+		o = s.option(form.Value, 'nft_priority_udp', 'UDP nft hook priority');
+		o.datatype = 'integer';
+		o.default = '-149';
+		o.rmempty = false;
+		o.description = 'Должно быть позже HomeProxy mangle priority, чтобы HomeProxy не перезаписывал UDP fwmark.';
+
+		o = s.option(form.Flag, 'sniff_tcp', 'Sniff TCP traffic');
 		o.default = '1';
 		o.rmempty = false;
+
+		o = s.option(form.Flag, 'sniff_udp', 'Sniff UDP/QUIC traffic');
+		o.default = '0';
+		o.rmempty = false;
+		o.description = 'Обычно лучше выключить для игр и QUIC.';
+
+		o = s.option(form.Flag, 'udp_disable_domain_unmapping', 'UDP compatibility mode');
+		o.default = '1';
+		o.rmempty = false;
+		o.description = 'Для UDP-ответов сохраняет исходный IP-адрес вместо sniffed domain.';
 
 		o = s.option(form.Flag, 'bypass_local', 'Не проксировать локальные IPv4');
 		o.default = '1';

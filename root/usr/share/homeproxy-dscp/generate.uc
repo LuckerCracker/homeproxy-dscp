@@ -311,10 +311,13 @@ const fwmark = uci.get(cfg_name, 'main', 'fwmark') || '0x1d5c9';
 const route_table = int(uci.get(cfg_name, 'main', 'table') || 10532);
 const rule_priority = int(uci.get(cfg_name, 'main', 'rule_priority') || 10532);
 const log_level = uci.get(cfg_name, 'main', 'log_level') || 'warn';
-const sniff = to_bool(uci.get(cfg_name, 'main', 'sniff') || '1');
+const legacy_sniff = uci.get(cfg_name, 'main', 'sniff');
+const sniff_tcp = to_bool(uci.get(cfg_name, 'main', 'sniff_tcp') || legacy_sniff || '1');
+const sniff_udp = to_bool(uci.get(cfg_name, 'main', 'sniff_udp') || '0');
+const udp_disable_domain_unmapping = to_bool(uci.get(cfg_name, 'main', 'udp_disable_domain_unmapping') || '1');
 const bypass_local = to_bool(uci.get(cfg_name, 'main', 'bypass_local') || '1');
 const nft_priority_tcp = int(uci.get(cfg_name, 'main', 'nft_priority_tcp') || -101);
-const nft_priority_udp = int(uci.get(cfg_name, 'main', 'nft_priority_udp') || -151);
+const nft_priority_udp = int(uci.get(cfg_name, 'main', 'nft_priority_udp') || -149);
 const udp_timeout = uci.get(hp_name, 'infra', 'udp_timeout') || '300';
 const self_mark = int(uci.get(hp_name, 'infra', 'self_mark') || 100);
 
@@ -649,8 +652,8 @@ uci.foreach(cfg_name, 'rule', (rule) => {
 			tag: tag,
 			listen: '::',
 			listen_port: port,
-			sniff: sniff,
-			sniff_override_destination: sniff
+			sniff: sniff_tcp,
+			sniff_override_destination: sniff_tcp
 		}));
 		push(inbound_tags, tag);
 		push(nft_tcp, sprintf('\t\tip saddr %s %sip dscp %s meta l4proto tcp counter redirect to :%d\n', src_ip, daddr_filter, dscp, port));
@@ -662,12 +665,13 @@ uci.foreach(cfg_name, 'rule', (rule) => {
 		push(config.inbounds, clean({
 			type: 'tproxy',
 			tag: tag,
-			listen: '::',
+			listen: '127.0.0.1',
 			listen_port: port,
 			network: 'udp',
 			udp_timeout: to_time(udp_timeout),
-			sniff: sniff,
-			sniff_override_destination: sniff
+			sniff: sniff_udp,
+			sniff_override_destination: sniff_udp,
+			udp_disable_domain_unmapping: udp_disable_domain_unmapping
 		}));
 		push(inbound_tags, tag);
 		has_udp = true;

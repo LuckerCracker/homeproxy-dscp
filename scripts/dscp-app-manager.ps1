@@ -3,7 +3,8 @@ param(
     [string]$User = "root",
     [int]$Port = 22,
     [string]$DefaultTarget = "routing:EU_NODE",
-    [int]$DefaultDscp = 46
+    [int]$DefaultDscp = 46,
+    [string]$PolicyStore = $env:COMPUTERNAME
 )
 
 $ErrorActionPreference = "Stop"
@@ -43,6 +44,7 @@ function Write-Header {
     Write-Host "Router:        $(if ($Router) { $Router } else { 'not configured' })"
     Write-Host "Default DSCP:  $DefaultDscp"
     Write-Host "Default node:  $DefaultTarget"
+    Write-Host "Policy store:  $PolicyStore"
     Write-Host ""
 }
 
@@ -113,10 +115,148 @@ function Escape-SingleQuotedShell {
     return $Value.Replace("'", $replacement)
 }
 
+function Invoke-SshScript {
+    param([string]$Script)
+
+    if (-not $Router) {
+        throw "Router is not configured."
+    }
+    if (-not (Get-Command ssh -ErrorAction SilentlyContinue)) {
+        throw "ssh command not found."
+    }
+
+    $payloadFile = Join-Path ([IO.Path]::GetTempPath()) ("homeproxy-dscp-manager-" + [Guid]::NewGuid().ToString("N") + ".sh")
+    [IO.File]::WriteAllText($payloadFile, ($Script -replace "`r`n", "`n") + "`n", [Text.Encoding]::ASCII)
+
+    try {
+        $sshTarget = "$User@$Router"
+        $sshCmd = 'ssh -p {0} {1} "ash -s" < "{2}"' -f $Port, $sshTarget, $payloadFile
+        $output = cmd.exe /d /c $sshCmd 2>&1
+
+        if ($LASTEXITCODE -ne 0) {
+            throw "Router command failed.`n$output"
+        }
+
+        return $output
+    }
+    finally {
+        Remove-Item -LiteralPath $payloadFile -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Get-PolicyShortName {
+    param($Policy)
+    return $Policy.Name.Substring($Script:Prefix.Length)
+}
+
+function Get-PolicyDscp {
+    param($Policy)
+
+    if ($null -ne $Policy.DSCPAction) {
+        return [int]$Policy.DSCPAction
+    }
+    if ($null -ne $Policy.DSCPValue) {
+        return [int]$Policy.DSCPValue
+    }
+
+    return $null
+}
+
+function Get-PolicyAppPath {
+    param($Policy)
+
+    if ($Policy.AppPathNameMatchCondition) {
+        return $Policy.AppPathNameMatchCondition
+    }
+    if ($Policy.AppPathName) {
+        return $Policy.AppPathName
+    }
+
+    return ""
+}
+
 function Get-DscpPolicies {
-    Get-NetQosPolicy -ErrorAction SilentlyContinue |
+    Get-NetQosPolicy -PolicyStore $PolicyStore -ErrorAction SilentlyContinue |
         Where-Object { $_.Name -like "$Script:Prefix*" } |
         Sort-Object Name
+}
+
+function Get-RouterDscpRules {
+    if (-not $Router) {
+        return @()
+    }
+
+    $remoteScript = @'
+for s in $(uci show homeproxy_dscp 2>/dev/null | sed -n "s/^\(homeproxy_dscp\.[^.]*\)=rule$/\1/p"); do
+  enabled=$(uci -q get "$s.enabled" || echo 0)
+  label=$(uci -q get "$s.label" || echo "")
+  src_ip=$(uci -q get "$s.src_ip" || echo "")
+  dscp=$(uci -q get "$s.dscp" || echo "")
+  proto=$(uci -q get "$s.proto" || echo both)
+  target=$(uci -q get "$s.target" || echo "")
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$s" "$enabled" "$label" "$src_ip" "$dscp" "$proto" "$target"
+done
+'@
+
+    $lines = @(Invoke-SshScript -Script $remoteScript)
+    $rules = @()
+
+    foreach ($line in $lines) {
+        if ([string]::IsNullOrWhiteSpace($line)) {
+            continue
+        }
+
+        $parts = $line -split "`t", 7
+        if ($parts.Count -lt 7) {
+            continue
+        }
+
+        $rules += [pscustomobject]@{
+            Section = $parts[0]
+            Enabled = ($parts[1] -eq "1")
+            Label   = $parts[2]
+            Source  = $parts[3]
+            Dscp    = if ($parts[4] -match '^\d+$') { [int]$parts[4] } else { $null }
+            Proto   = $parts[5]
+            Target  = $parts[6]
+        }
+    }
+
+    return $rules
+}
+
+function Test-ProtocolMatch {
+    param(
+        [string]$RouterProto,
+        [string]$WantedProto
+    )
+
+    if ($RouterProto -eq "both") {
+        return $true
+    }
+    if ($WantedProto -eq "both") {
+        return $RouterProto -in @("tcp", "udp", "both")
+    }
+
+    return $RouterProto -eq $WantedProto
+}
+
+function Find-MatchingRouterRule {
+    param(
+        [array]$RouterRules,
+        [string]$RuleName,
+        [string]$WindowsIp,
+        [int]$Dscp,
+        [string]$Protocols = "both"
+    )
+
+    return @($RouterRules | Where-Object {
+        $_.Enabled -and
+        $_.Label -eq $RuleName -and
+        $_.Source -eq $WindowsIp -and
+        $_.Dscp -eq $Dscp -and
+        (Test-ProtocolMatch -RouterProto $_.Proto -WantedProto $Protocols)
+    } | Select-Object -First 1)
 }
 
 function Format-PolicyTable {
@@ -128,9 +268,9 @@ function Format-PolicyTable {
     }
 
     $policies | Select-Object `
-        @{n = "Name"; e = { $_.Name.Substring($Script:Prefix.Length) } },
-        @{n = "DSCP"; e = { $_.DSCPValue } },
-        @{n = "AppPath"; e = { $_.AppPathName } } |
+        @{n = "Name"; e = { Get-PolicyShortName $_ } },
+        @{n = "DSCP"; e = { Get-PolicyDscp $_ } },
+        @{n = "AppPath"; e = { Get-PolicyAppPath $_ } } |
         Format-Table -AutoSize
 }
 
@@ -170,10 +310,10 @@ function Ensure-QosPolicy {
     Require-Admin
 
     $policyName = "$Script:Prefix$RuleName"
-    $existing = Get-NetQosPolicy -Name $policyName -ErrorAction SilentlyContinue
+    $existing = Get-NetQosPolicy -PolicyStore $PolicyStore -Name $policyName -ErrorAction SilentlyContinue
 
     if ($existing) {
-        Remove-NetQosPolicy -Name $policyName -Confirm:$false
+        Remove-NetQosPolicy -PolicyStore $PolicyStore -Name $policyName -Confirm:$false
     }
 
     New-NetQosPolicy `
@@ -181,9 +321,10 @@ function Ensure-QosPolicy {
         -AppPathNameMatchCondition $AppPath `
         -IPProtocolMatchCondition Both `
         -DSCPAction $Dscp `
+        -PolicyStore $PolicyStore `
         -NetworkProfile All | Out-Null
 
-    Write-Host "Windows QoS policy saved: $policyName" -ForegroundColor Green
+    Write-Host "Windows QoS policy saved: $policyName ($PolicyStore)" -ForegroundColor Green
 }
 
 function Invoke-RouterRuleUpdate {
@@ -255,21 +396,78 @@ echo "Updated HomeProxy DSCP rule: __LABEL__"
     $remoteScript = $remoteScript.Replace('__PROTO__', $proto)
     $remoteScript = $remoteScript.Replace('__TARGET__', $target)
 
-    $payloadFile = Join-Path ([IO.Path]::GetTempPath()) ("homeproxy-dscp-manager-" + [Guid]::NewGuid().ToString("N") + ".sh")
-    [IO.File]::WriteAllText($payloadFile, ($remoteScript -replace "`r`n", "`n") + "`n", [Text.Encoding]::ASCII)
+    Invoke-SshScript -Script $remoteScript | Write-Host
+}
 
-    try {
-        $sshTarget = "$User@$Router"
-        $sshCmd = 'ssh -p {0} {1} "ash -s" < "{2}"' -f $Port, $sshTarget, $payloadFile
-        cmd.exe /d /c $sshCmd
+function Invoke-RouterRuleRemove {
+    param(
+        [string]$RuleName,
+        [switch]$RestartService
+    )
 
-        if ($LASTEXITCODE -ne 0) {
-            throw "Router update failed."
+    if (-not $Router) {
+        return
+    }
+
+    $label = Escape-SingleQuotedShell $RuleName
+    $restartLine = if ($RestartService) { "/etc/init.d/homeproxy-dscp restart || true" } else { ":" }
+
+    $remoteScript = @'
+set -eu
+removed=0
+for s in $(uci show homeproxy_dscp 2>/dev/null | sed -n "s/^\(homeproxy_dscp\.[^.]*\)=rule$/\1/p"); do
+  current=$(uci -q get "$s.label" || true)
+  if [ "$current" = '__LABEL__' ]; then
+    uci delete "$s"
+    removed=1
+  fi
+done
+if [ "$removed" = "1" ]; then
+  uci commit homeproxy_dscp
+  __RESTART_LINE__
+  echo "Removed HomeProxy DSCP router rule: __LABEL__"
+else
+  echo "No matching HomeProxy DSCP router rule found: __LABEL__"
+fi
+'@
+
+    $remoteScript = $remoteScript.Replace('__LABEL__', $label)
+    $remoteScript = $remoteScript.Replace('__RESTART_LINE__', $restartLine)
+
+    Invoke-SshScript -Script $remoteScript | Write-Host
+}
+
+function Show-MatchReport {
+    Write-Header
+    Write-Host "Windows/router matching report" -ForegroundColor Cyan
+    Write-Host ""
+
+    $policies = @(Get-DscpPolicies)
+    if (-not $policies.Count) {
+        Write-Host "No HomeProxy DSCP policies found." -ForegroundColor Yellow
+        return
+    }
+
+    $windowsIp = Read-Default "Windows IPv4" (Get-PrimaryIPv4)
+    $routerRules = @(Get-RouterDscpRules)
+
+    $report = foreach ($policy in $policies) {
+        $name = Get-PolicyShortName $policy
+        $dscp = Get-PolicyDscp $policy
+        $match = Find-MatchingRouterRule -RouterRules $routerRules -RuleName $name -WindowsIp $windowsIp -Dscp $dscp -Protocols "both"
+
+        [pscustomobject]@{
+            Name        = $name
+            DSCP        = $dscp
+            RouterRule  = if ($match.Count) { "yes" } else { "no" }
+            Result      = if ($match.Count) { "will proxy" } else { "will NOT proxy" }
+            AppPath     = Get-PolicyAppPath $policy
         }
     }
-    finally {
-        Remove-Item -LiteralPath $payloadFile -Force -ErrorAction SilentlyContinue
-    }
+
+    $report | Format-Table -AutoSize
+    Write-Host ""
+    Write-Host "A packet is proxied only when router has an enabled rule with the same Windows IPv4, DSCP value and protocol." -ForegroundColor Yellow
 }
 
 function Add-AppFlow {
@@ -319,6 +517,9 @@ function Add-AppFlow {
         -Target $target `
         -EnableAddon `
         -RestartService
+
+    Write-Host ""
+    Write-Host "Strict rule: without a matching enabled router rule for this Windows IPv4 + DSCP + protocol, traffic will not be proxied." -ForegroundColor Yellow
 }
 
 function Remove-AppFlow {
@@ -338,9 +539,18 @@ function Remove-AppFlow {
     }
 
     Require-Admin
-    Remove-NetQosPolicy -Name $policy.Name -Confirm:$false
+    Remove-NetQosPolicy -PolicyStore $PolicyStore -Name $policy.Name -Confirm:$false
     Write-Host "Removed: $($policy.Name)" -ForegroundColor Green
-    Write-Host "Router rule was not removed automatically. Disable or delete it in LuCI if needed." -ForegroundColor Yellow
+
+    if ($Router) {
+        $removeRouter = Read-Default "Remove matching router rule too? y/n" "y"
+        if ($removeRouter -in @("y", "Y", "yes", "YES")) {
+            Invoke-RouterRuleRemove -RuleName (Get-PolicyShortName $policy) -RestartService
+        }
+    }
+    else {
+        Write-Host "Router rule was not removed automatically. Disable or delete it in LuCI if needed." -ForegroundColor Yellow
+    }
 }
 
 function Test-DscpFlow {
@@ -348,7 +558,11 @@ function Test-DscpFlow {
     Write-Host "Quick verification commands" -ForegroundColor Cyan
     Write-Host ""
     Write-Host "Windows QoS policies:"
-    Get-DscpPolicies | Format-Table Name, DSCPValue, AppPathName -AutoSize
+    Get-DscpPolicies | Select-Object `
+        Name,
+        @{n = "DSCP"; e = { Get-PolicyDscp $_ } },
+        @{n = "AppPath"; e = { Get-PolicyAppPath $_ } } |
+        Format-Table -AutoSize
     Write-Host ""
     Write-Host "Router checks:"
     Write-Host "  nft list table inet homeproxy_dscp"
@@ -363,8 +577,9 @@ function Show-Menu {
         Write-Host "[1] List DSCP applications"
         Write-Host "[2] Add or update application"
         Write-Host "[3] Remove Windows QoS policy"
-        Write-Host "[4] Show verification commands"
-        Write-Host "[5] Exit"
+        Write-Host "[4] Check Windows/router matches"
+        Write-Host "[5] Show verification commands"
+        Write-Host "[6] Exit"
         Write-Host ""
 
         $choice = Read-Host "Choose"
@@ -385,10 +600,19 @@ function Show-Menu {
                     Pause-Menu
                 }
                 "4" {
-                    Test-DscpFlow
+                    if ($Router) {
+                        Show-MatchReport
+                    }
+                    else {
+                        Write-Host "Router is not configured. Restart the manager with -Router 192.168.1.1 to check matches." -ForegroundColor Yellow
+                    }
                     Pause-Menu
                 }
                 "5" {
+                    Test-DscpFlow
+                    Pause-Menu
+                }
+                "6" {
                     return
                 }
                 default {

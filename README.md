@@ -29,13 +29,24 @@ For stock OpenWrt, install HomeProxy separately first. Then install only the gen
 ## Local IPv4 bypass
 
 By default the addon does not proxy local destination IPv4 addresses. The generated nftables table creates a `bypass4`
-set and returns before TCP redirect / UDP TProxy for:
+set and adds `ip daddr != @bypass4` to every TCP redirect / UDP TProxy rule for:
 
 - private and reserved IPv4 ranges, for example `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`;
 - IPv4 subnets detected from `/etc/config/network`, including non-RFC1918 local LANs;
 - extra IPv4/CIDR entries configured in LuCI, including explicit WAN IPv4/CIDR exclusions.
 
 This keeps router/LAN access working even when the Windows application is DSCP-marked.
+
+The match is strict: a packet is proxied only when an enabled router rule matches the Windows source IPv4, DSCP value,
+protocol and non-bypassed destination. If Windows marks an application with DSCP `46`, but the router only has a rule for
+DSCP `47`, that traffic is not proxied by this addon.
+
+For UDP games and QUIC traffic, UDP sniffing is disabled by default. TCP can still use sniffing, but UDP/QUIC should
+usually keep the original destination unchanged.
+
+The UDP TProxy hook runs after HomeProxy's mangle hook by default (`mangle + 1`, numeric priority `-149`). This is
+intentional: HomeProxy may mark LAN traffic for its own TUN path at priority `mangle`, and the DSCP addon must set its
+own UDP fwmark after that.
 
 Languages: [Русский](#русский) | [English](#english) | [中文](#中文)
 
@@ -83,6 +94,37 @@ Windows App.exe
   -> homeproxy-dscp sing-box
   -> выбранный HomeProxy routing node
 ```
+
+### Строгое совпадение DSCP
+
+Роутер не знает имя Windows-процесса. Он проксирует пакет только если есть
+включенное правило с тем же `Windows source IPv4`, `DSCP value`, протоколом и
+destination не входит в bypass. Если Windows помечает приложение DSCP `46`, а
+на роутере есть только правило для DSCP `47`, этот трафик не будет
+перехвачен addon.
+
+В PowerShell manager есть пункт `Check Windows/router matches`: он показывает,
+для каких Windows QoS policies найдено соответствующее правило на роутере.
+
+### UDP и QUIC
+
+Для игр и QUIC важно не менять original destination UDP-пакета. Поэтому addon
+по умолчанию использует `Sniff TCP traffic = enabled`, но
+`Sniff UDP/QUIC traffic = disabled`. Если включить UDP sniff/override, sing-box
+может заменить IP назначения на sniffed domain, и некоторые QUIC-игры перестают
+нормально работать.
+
+Для игровых правил обычно оставляйте:
+
+```text
+Sniff TCP traffic: enabled
+Sniff UDP/QUIC traffic: disabled
+UDP compatibility mode: enabled
+UDP nft hook priority: -149
+```
+
+`UDP nft hook priority` по умолчанию стоит после HomeProxy mangle hook. Это
+нужно, чтобы HomeProxy не перезаписывал UDP fwmark addon своим mark для TUN.
 
 ### Установка
 
@@ -172,10 +214,23 @@ PowerShell нужно запускать от администратора.
 - посмотреть приложения с DSCP policy;
 - добавить или обновить приложение;
 - удалить Windows QoS policy;
+- проверить совпадение Windows policies с router rules;
 - вывести команды проверки.
 
 Если запустить manager без `-Router`, он настроит только Windows и выведет
 параметры, которые нужно вручную вставить в LuCI.
+
+По умолчанию manager сохраняет Windows QoS policies в persistent local computer
+store (`$env:COMPUTERNAME`). Проверяйте их через PowerShell:
+
+```powershell
+Get-NetQosPolicy -PolicyStore $env:COMPUTERNAME
+Get-NetQosPolicy -PolicyStore ActiveStore
+```
+
+`gpedit.msc` может не показывать все правила, созданные PowerShell/WMI, или
+показывать ошибку чтения GPO. Для этого проекта используйте PowerShell manager
+как основной интерфейс Windows-правил.
 
 ### Проверка
 
@@ -267,6 +322,37 @@ Windows App.exe
   -> selected HomeProxy routing node
 ```
 
+### Strict DSCP Matching
+
+The router does not know the Windows process name. A packet is proxied only
+when an enabled rule matches the same `Windows source IPv4`, `DSCP value`,
+protocol and a destination outside the bypass set. If Windows marks an
+application with DSCP `46`, but the router only has a rule for DSCP `47`, this
+traffic is not captured by the addon.
+
+The PowerShell manager includes `Check Windows/router matches`, which shows
+which Windows QoS policies have a matching router rule.
+
+### UDP And QUIC
+
+Games and QUIC traffic are sensitive to original UDP destination handling.
+For that reason, the addon uses `Sniff TCP traffic = enabled`, but
+`Sniff UDP/QUIC traffic = disabled` by default. If UDP sniff/override is
+enabled, sing-box may replace the destination IP with a sniffed domain, and
+some QUIC games may stop working correctly.
+
+For game rules, usually keep:
+
+```text
+Sniff TCP traffic: enabled
+Sniff UDP/QUIC traffic: disabled
+UDP compatibility mode: enabled
+UDP nft hook priority: -149
+```
+
+`UDP nft hook priority` intentionally runs after the HomeProxy mangle hook, so
+HomeProxy cannot overwrite the addon's UDP fwmark with its own TUN mark.
+
 ### Install
 
 On stock OpenWrt, `luci-app-homeproxy` is usually unavailable in official OpenWrt feeds. If you manually added
@@ -342,10 +428,23 @@ The menu can:
 - list DSCP applications;
 - add or update an application;
 - remove a Windows QoS policy;
+- check Windows policies against router rules;
 - show verification commands.
 
 If `-Router` is omitted, the manager only configures Windows and prints the
 values to enter manually in LuCI.
+
+By default, the manager stores Windows QoS policies in the persistent local
+computer store (`$env:COMPUTERNAME`). Check them with PowerShell:
+
+```powershell
+Get-NetQosPolicy -PolicyStore $env:COMPUTERNAME
+Get-NetQosPolicy -PolicyStore ActiveStore
+```
+
+`gpedit.msc` may not display every policy created through PowerShell/WMI, or may
+show a GPO read warning. For this project, use the PowerShell manager as the
+main Windows policy UI.
 
 ### Verify
 
@@ -436,6 +535,34 @@ Windows App.exe
   -> 指定 HomeProxy routing node
 ```
 
+### 严格 DSCP 匹配
+
+路由器不知道 Windows 进程名。只有当启用的规则同时匹配 `Windows source
+IPv4`、`DSCP value`、协议，并且目标地址不在 bypass 集合中时，数据包才会被代理。
+如果 Windows 给应用设置的是 DSCP `46`，但路由器上只有 DSCP `47` 的规则，这些流量
+不会被本插件捕获。
+
+PowerShell 管理器中有 `Check Windows/router matches` 菜单项，可显示哪些 Windows
+QoS policies 在路由器上有对应规则。
+
+### UDP 和 QUIC
+
+游戏和 QUIC 流量通常需要保持 UDP 原始目标地址不变。因此本插件默认启用
+`Sniff TCP traffic`，但禁用 `Sniff UDP/QUIC traffic`。如果启用 UDP sniff/override，
+sing-box 可能会把目标 IP 替换为 sniff 到的域名，某些 QUIC 游戏会因此无法正常工作。
+
+游戏规则通常建议保持：
+
+```text
+Sniff TCP traffic: enabled
+Sniff UDP/QUIC traffic: disabled
+UDP compatibility mode: enabled
+UDP nft hook priority: -149
+```
+
+`UDP nft hook priority` 默认在 HomeProxy mangle hook 之后运行，这样 HomeProxy
+不会把插件设置的 UDP fwmark 覆盖成自己的 TUN mark。
+
 ### 安装
 
 在原版 OpenWrt 上，`luci-app-homeproxy` 通常不在官方 OpenWrt feeds 中。如果你手动添加了 ImmortalWrt feeds，
@@ -511,9 +638,21 @@ Services -> HomeProxy DSCP
 - 查看 DSCP 应用；
 - 添加或更新应用；
 - 删除 Windows QoS policy；
+- 检查 Windows policies 与路由器规则是否匹配；
 - 显示验证命令。
 
 如果不指定 `-Router`，管理器只配置 Windows，并输出需要手动填入 LuCI 的参数。
+
+默认情况下，管理器会把 Windows QoS policies 保存到持久化的本地计算机 store
+（`$env:COMPUTERNAME`）。可以用 PowerShell 检查：
+
+```powershell
+Get-NetQosPolicy -PolicyStore $env:COMPUTERNAME
+Get-NetQosPolicy -PolicyStore ActiveStore
+```
+
+`gpedit.msc` 可能无法显示所有通过 PowerShell/WMI 创建的规则，或者显示 GPO 读取警告。
+本项目建议使用 PowerShell manager 作为 Windows 规则的主要管理界面。
 
 ### 验证
 
